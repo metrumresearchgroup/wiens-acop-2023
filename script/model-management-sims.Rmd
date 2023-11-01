@@ -1,0 +1,99 @@
+---
+title: "DCM Comparison NONMEM Model Management"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+library(bbr)
+library(tidyverse)
+library(here)
+library(pmplots)
+library(magrittr)
+library(glue)
+
+source(here("script/bbr-helpers.R"))
+
+# define model dir and create folder if doesn't already exist
+MODEL_DIR <- here("model/nonmem/sims")
+if(!dir.exists(MODEL_DIR)) dir.create(MODEL_DIR)
+```
+
+## initialize folder for bbr runs
+
+```{r, eval=FALSE}
+bbi_init(.dir = MODEL_DIR,            # the directory to create the bbi.yaml in
+         .nonmem_dir = "/opt/NONMEM", # location of NONMEM installation
+         .nonmem_version = "nm75")  # default NONMEM version to use
+```
+
+## run log
+
+```{r}
+rl <- file.path(MODEL_DIR) %>% 
+  run_log(.recurse=FALSE) %>% 
+  mutate_at("run", as.numeric) %>% 
+  arrange(-run) %>% 
+  add_config() %>%
+  add_summary() %>% 
+  add_aic() %>% 
+  collapse_to_string(tags) %>%
+  select(run,description,tags,based_on,ofv,aic,error_msg) %T>%
+  View("runlog")
+```
+
+## create all models from template
+
+```{r, eval=FALSE}
+## copy template from parent directory
+file.copy(file.path(MODEL_DIR, "../template.ctl"), 
+          file.path(MODEL_DIR, "template.ctl"))
+
+## load template for file creation
+mod <- new_model(file.path(MODEL_DIR,"template"))
+
+## create 100 models based on template file
+walk(1:100, ~{
+copy_model_from(
+  mod,
+  .new_model = .x,
+  .inherit_tags = TRUE, 
+  .update_model_file=FALSE) %>% 
+  update_run_number(.suffixes = c(
+    ## be sure to update the data set name too!!! not a default suffix
+    '.csv',
+    '_saem.ext',
+    '.ext',
+    '.tab',
+    'par.tab'
+  ))
+})
+
+## remove template so it doesn't show up in run log
+file.remove(file.path(MODEL_DIR,"template.ctl"))
+file.remove(file.path(MODEL_DIR,"template.yaml"))
+```
+
+## copy csv files if stored in other directory
+```{r}
+map(1:100, ~{file.copy(
+  here("model/nonmem/sims-old", glue("{.x}.csv")),
+  file.path(MODEL_DIR, glue("{.x}.csv")),
+)})
+```
+
+## run many models
+
+```{r, eval=FALSE}
+map(1:100, ~read_model(file.path(MODEL_DIR,.x))) %>% 
+  submit_models(.bbi_args=list(overwrite=TRUE))
+```
+
+## view single run results
+
+```{r, eval=FALSE}
+read_model(file.path(MODEL_DIR,1)) %T>% 
+  view_lst() %>% 
+  model_summary() 
+```

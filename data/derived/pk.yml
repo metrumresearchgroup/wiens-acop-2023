@@ -1,0 +1,50 @@
+SETUP__:
+  description: PK NMTRAN dataset
+  use_internal_db: true
+
+C:  
+ID:
+TIME:
+  short: Time after first dose
+  unit: hours
+MDV:
+EVID:
+AMT: 
+DV:
+NUM: 
+DOSE: 
+  short: Dose
+  values: {5 mg: 5, 20 mg: 20, 50 mg: 50, 100 mg: 100}
+SEX:
+  short: sex
+  values: {Male: 1, Female: 0}
+WT:
+  short: body weight
+  unit: kg
+X1:
+  short: covariate 1
+X2:
+  short: covariate 2
+X3:
+  short: covariate 3
+X4:
+  short: covariate 4
+X5:
+  short: covariate 5
+X6:
+  short: covariate 6
+CLI:
+  short: individual CL
+  unit: L/hr
+V1I:
+  short: individual V1
+  unit: L
+QI:
+  short: individual Q
+  unit: L/hr
+V2I:
+  short: individual V2
+  unit: L
+SIGMAI:
+  short: individual Sigma
+

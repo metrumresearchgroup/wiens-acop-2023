@@ -1,0 +1,299 @@
+---
+title: "Analysis of 'generic' dataset with shapley values"
+author: "Matthew Wiens"
+date: "04/13/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This script is an example/test of setting up the data with masking and padding to account for different observation times per patient
+
+# Setup 
+
+```{r}
+# run once: 
+library(tensorflow)
+suppressWarnings(library(keras))
+library(tidyverse)
+library(here)
+library(recipes)
+library(reticulate)
+library(rsample)
+
+source(here::here("script", "loss-functions.R"))
+source(here::here("script", "loss-functions-padding.R"))
+source(here::here("script", "utility-functions.R"))
+source(here::here("script", "shapley-values.R"))
+
+tfp <- import("tensorflow_probability")
+```
+
+# PK Data Setup
+
+```{r data-inputs}
+pkdat_raw <- read_csv(here("data", "derived", "pk-sim-N10000-generic.csv"))
+
+# Introduce missing values
+pkdat <- pkdat_raw %>% 
+   slice_sample(prop = 0.75)  %>%
+   arrange(ID, TIME)
+
+``` 
+
+Set up longitudinal dataset. The input to tensorflow is one row per individual. The covariates are also standardized and dummy variables created for any categorical covariates. 
+
+```{R data-creation}
+
+pkdat_wide <- pkdat %>%
+  pivot_wider(id_cols = ID:X6, names_from = TIME, names_prefix = "t", values_from = DV) 
+
+init_split <- rsample::initial_split(pkdat_wide)
+
+covs <- c("WT", "SEX", "X1", "X2", "X3", "X4", "X5", "X6")
+
+default_recipe <- recipes::recipe(training(init_split)) %>%
+  update_role(starts_with("t"), new_role = "outcome") %>%
+  update_role(matches(covs), new_role = "predictor") %>%
+  update_role(DOSE, new_role = "Dosing") %>%
+  update_role(ID, new_role = "ID") %>%
+  step_range(all_numeric_predictors(), -ID, min = -1) %>%
+  step_dummy(all_nominal_predictors(), one_hot = T) 
+
+baked = recipes::prep(default_recipe)
+
+x_train = bake(baked, training(init_split))  %>% select(all_of(covs)) %>% as.matrix
+
+x_test = bake(baked, testing(init_split)) %>% select(all_of(covs))  %>% as.matrix
+
+
+pk_output <- pkdat %>% 
+   select(ID, TIME, DV, DOSE)
+
+
+y_train <- create_masking(pk_output, bake(baked, training(init_split)))
+
+y_test <- create_masking(pk_output, bake(baked, testing(init_split)))
+
+```
+
+
+# 2 cpt model
+
+
+```{R fitting}
+# Set up a model with 4 hidden layers
+# I.e. the archictecture of the NN
+model2 = keras_model_sequential() %>% 
+  layer_dense(units=256, activation = "tanh", input_shape = length(covs)) %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units=128, activation = "tanh") %>% 
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units=64, activation = "tanh") %>% 
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units=64, activation = "tanh") %>% 
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units=4, 
+              activation="linear", 
+              bias_initializer = tf$keras$initializers$constant(1),
+              #kernel_initializer = "zeros"
+              )
+
+# Compile the model with loss and optimizer for training
+model2 %>% compile(
+   loss =  logitudinal_loss_2cpt_bolus_padded,  # insert custom loss function 
+   optimizer = tf$keras$optimizers$legacy$Adam(learning_rate = 0.01) 
+ )
+ 
+model2 %>% summary()
+
+# Setting the weights for the bias term of the last layer
+# Conceptually similar to setting initial values of a "typical value"
+model2$layers[[9]]$set_weights(list(
+  model2$layers[[9]]$get_weights()[[1]],
+  tf$constant(log(c(2, 50, 4.5, 90))) 
+))
+
+
+
+history <- model2 %>% keras::fit(x_train, y_train, verbose = 2,  epochs = 2, batch_size = 128, validation_split = 0.2)
+
+plot(history)
+
+
+```
+
+
+Now, we can extract predictions for the PK parameters, and derive predicted concentration-time curves
+
+```{R predictions}
+
+# Extract the observed data to make predictions on
+# One row per observation
+x_test_df <- testing(init_split) %>% 
+  select(ID) %>%
+  bind_cols(x_train) %>%
+  inner_join(pkdat %>% select(ID, DOSE, TIME, DV), by = "ID")
+
+# Predicted PK params, as output from the model
+pred_params_m2 <- x_test_df %>%
+  select(all_of(colnames(x_test))) %>%
+  as.matrix() %>%
+  predict(model2, .)
+
+# Resacle params and convert to tensor objects for use in the compartemental model
+ pred_conc <- two_cmpt_bolus_param_to_predictions(
+   dose_levels=tf$constant(x_test_df$DOSE, shape=c(nrow(x_test_df),1L)), 
+   dose_times=tf$constant(x_test_df$TIME, shape=c(nrow(x_test_df),1L)),
+   CL=tf$constant(exp(pred_params_m2[,1]), shape=c(nrow(x_test_df),1L)), 
+   V=tf$constant(exp(pred_params_m2[,2]), shape=c(nrow(x_test_df),1L)),
+   Q=tf$constant(exp(pred_params_m2[,3]), shape=c(nrow(x_test_df),1L)), 
+   V2=tf$constant(exp(pred_params_m2[,4]), shape=c(nrow(x_test_df),1L)))
+ 
+# Create a tibble with both the predicted parameters and concentrations
+predicted_df <-  x_test_df %>%
+  bind_cols(pred_params_m2                                                                   %>% as_tibble() %>% set_names(c("CL", "V", "Q", "V2"))) %>%
+  bind_cols(pred_conc %>% as.matrix() %>% as_tibble() %>% set_names("PRED"))
+
+# Visualize the predictions/fit for 16 subjects
+predicted_df %>%
+  filter(dense_rank(ID) <= 16) %>%
+   ggplot(aes(x = TIME)) +
+   geom_point(aes(y = DV, color = "Observed")) +
+   geom_line(aes(y = DV, color = "Observed")) +
+   geom_point(aes(y = PRED, color = "Predicted")) +
+   geom_line(aes(y = PRED, color = "Predicted")) +
+   facet_wrap(~ID, scales = "free_y")
+
+# Predicted versus observed plot
+predicted_df %>%
+  ggplot(aes(x = PRED, y = DV)) +
+  geom_point(size = 0.1) +
+  geom_abline(slope = 1, linetype = 2, color = "blue") +
+  scale_x_continuous(trans = "log10") + 
+  scale_y_continuous(trans = "log10") 
+
+# Example of evaluating the predictions for a single row
+two_cmpt_bolus_param_to_predictions(
+  dose_levels = tf$constant(list(5), shape = c(1L, 1L)),
+  dose_times = tf$constant(list(1), shape = c(1L, 1L)),
+  CL = tf$constant(list(2), shape = c(1L, 1L)),
+  V1 = tf$constant(list(61.5), shape = c(1L, 1L)),
+  Q  = tf$constant(list(3.61), shape = c(1L, 1L)),
+  V2 = tf$constant(list(67.3), shape = c(1L, 1L))
+)
+```
+
+# Shapley Values
+
+```{R}
+
+# Extract predictions for CL, wrapped in a function
+shap_CL_pred_wrapper <- function(object, newdata) {
+  
+  model_preds <- predict(object, newdata)
+  
+  model_preds[,1] # 1 corresponds to CL being the first parameter
+}
+
+mean_abs = function(x) {mean(abs(x))}
+
+
+shapley_input_df <- bake(baked, new_data = pkdat) %>% 
+                    select(ID, all_of(covs))  %>%
+                    distinct()
+
+# Set up covariate data in a "long" format for joining the fastshap output
+covariate_data_long <- pkdat %>%
+  select(ID, all_of(covs)) %>%
+  distinct() %>%
+  pivot_longer(cols = -ID, names_to = "covariate", values_to = "cov_value") %>%
+  group_by(covariate) %>%
+  mutate(cov_quantile = percent_rank(cov_value))
+
+# Computing shapley values, on the *test* data
+shapley_values <- 
+  fastshap::explain(
+    object = model2,
+    pred_wrapper = shap_CL_pred_wrapper,
+    X = shapley_input_df %>% 
+      select(-ID) %>%
+      as.matrix,
+    newdata = shapley_input_df %>% 
+      select(-ID) %>%
+      as.matrix,
+    nsim = 1)
+
+# Combine shapley values to covariate data
+shapley_df <- bind_cols(shapley_input_df %>% select(ID), 
+                        as_tibble(shapley_values)) %>%
+  pivot_longer(cols = -ID, names_to = "covariate", values_to = "shapley_value") %>%
+  inner_join(covariate_data_long, by = c("ID", "covariate")) %>%
+  mutate(covariate = factor(covariate)) %>% 
+  mutate(covariate = forcats::fct_reorder(covariate, shapley_value, .fun = mean_abs))
+
+# Plot of all covariates (VIP type plot)
+shapley_df %>%
+  ggplot(aes(x = covariate, y = shapley_value,  color = cov_quantile)) +
+  geom_jitter(alpha = 0.5, width = 0.1) +
+  scale_colour_viridis_c(limits = c(0, 1), option = "plasma", direction = -1) +
+  geom_abline(slope = 0, intercept = 0, colour = "darkgrey") +
+  coord_flip() +
+  labs(x = "Shapley Value", "Covariate", color = "Covariate Quantile")
+
+# Plots to explore functional relationships
+# By overall
+shapley_df %>%
+  inner_join(shapley_input_df, by = "ID") %>%
+  filter(covariate != "SEX") %>%
+  ggplot(aes(x = cov_value, y = shapley_value)) +
+  #geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth() +
+  facet_wrap(~covariate, scales = "free_x") +
+  labs(x = "Covariate Value", y = "Shapley Value")
+
+# Faceted by sex
+shapley_df %>%
+  inner_join(shapley_input_df, by = "ID") %>%
+  filter(covariate != "SEX") %>%
+  ggplot(aes(x = cov_value, y = shapley_value, color = as.factor(SEX))) +
+  #geom_point(size = 0.1, alpha = 0.15) +
+  geom_smooth(aes(group = SEX)) +
+  facet_wrap(~covariate, scales = "free_x") +
+  labs(x = "Covariate Value", y = "Shapley Value", color = "SEX")
+
+```
+
+
+## Marginal simulations 
+
+These are plots that might be made in a classical analysis to show a covariate effect. Here, they can still be made but are substantially less useful and much more noisy
+
+```{R}
+
+new_dat <- crossing(DOSE = 10,
+                  WT = 70,
+       X1 = 0,
+       X2 = seq(-2, 2, length.out = 100),
+       X3 = 0,
+       X4 = c(-1, 0, 0.05, 1),
+       X5 = 0,
+       X6 = 0,
+       SEX = c(0, 1))
+
+marg_preds <- new_dat %>%
+  select(all_of(colnames(x_train))) %>%
+  as.matrix() %>%
+  predict(model2, .)
+
+ 
+marg_predicted_df <-  new_dat %>%
+  bind_cols(marg_preds %>% as_tibble() %>% set_names(c("CL", "V", "Q", "V2"))) 
+
+marg_predicted_df %>%
+  ggplot(aes(x = X2, y = CL, group = X4, color = as.factor(X4))) +
+  geom_line() +
+  facet_wrap(~SEX) +
+  labs(y = "Log CL")
+
+```
