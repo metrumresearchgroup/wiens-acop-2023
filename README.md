@@ -32,3 +32,5 @@ We suggest running the code within Rstudio and an Rproject.
 - script/model-management-sims.Rmd: Script to run NLME models
 - script/python-setup.R: Setup script for our python, reticulate, and tensorflow packages
 - script/shapley-values.R: Functions for computing shapley values for these models
+
+![nn-workflow](https://github.com/metrumresearchgroup/wiens-acop-2023/assets/145580004/67d3b234-a33c-4ad2-9b8d-e6749af295de)
