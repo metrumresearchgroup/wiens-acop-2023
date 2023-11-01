@@ -3,7 +3,7 @@ Repository corresponding to ACOP14 poster - Wiens et al., "Illustrating Integrat
 
 # Methodology Overview
 
-This work extends the deep compartmental models proposed for PK analysis by [Janssen et. al](https://ascpt.onlinelibrary.wiley.com/doi/10.1002/psp4.12808). We show examples of this work in R, tensorflow, and keras with several extensions. 
+This work extends the deep compartmental models proposed for PK analysis by [Janssen et al](https://ascpt.onlinelibrary.wiley.com/doi/10.1002/psp4.12808). We show examples of this work in R, tensorflow, and keras with several extensions. 
 We fit the model with estimates for the RUV, Shapley values to interpret the model, and comparisons with NLME models with non-linear covariates. 
 
 The `script/generic-data-analysis.Rmd` walks through a simple analysis pipeline, including setting up the data for use with tensorflow, creating a neural network, fitting model, and intepreting the model with Shapley values. 
