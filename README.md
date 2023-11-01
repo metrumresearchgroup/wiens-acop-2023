@@ -8,6 +8,8 @@ We fit the model with estimates for the RUV, Shapley values to interpret the mod
 
 The `script/generic-data-analysis.Rmd` walks through a simple analysis pipeline, including setting up the data for use with tensorflow, creating a neural network, fitting model, and intepreting the model with Shapley values. 
 
+![nn-workflow](https://github.com/metrumresearchgroup/wiens-acop-2023/assets/145580004/67d3b234-a33c-4ad2-9b8d-e6749af295de)
+
 # Setup
 
 This code was developed under R 4.1.3. 
@@ -33,4 +35,4 @@ We suggest running the code within Rstudio and an Rproject.
 - script/python-setup.R: Setup script for our python, reticulate, and tensorflow packages
 - script/shapley-values.R: Functions for computing shapley values for these models
 
-![nn-workflow](https://github.com/metrumresearchgroup/wiens-acop-2023/assets/145580004/67d3b234-a33c-4ad2-9b8d-e6749af295de)
+
