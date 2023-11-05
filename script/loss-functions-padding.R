@@ -5,8 +5,7 @@ source(here::here("script", "loss-functions-two-cmpt.R"))
 logitudinal_loss_1cpt_bolus_padded <- function(y_true, y_pred) {
   
   concentrations <- y_true[,1,]
-  
-  #ones_shape <- tf$ones_like(concentrations)
+
   
   times <- y_true[,2,]
   
@@ -14,19 +13,11 @@ logitudinal_loss_1cpt_bolus_padded <- function(y_true, y_pred) {
   
   dose <- y_true[,4,1:1]
   
-  #times <- ones_shape*tf$constant(list(times_vec))
-  # Minimal example variables for development
-  # y_true <- tf$constant(list(list(1, 2, 3), list(2, 3, 4)))
-  # y_pred <- tf$constant(list(list(1, 1, 1, 1), list(1.1, 1.2, 1.3, 1.4)))
-  #times = tf$constant(list(list(0.5, 1, 2), list(0.5, 1, 2)))
   
   y_pred_exp <- tf$exp(y_pred) # Assume the params are logged from the NN
   
   CL <-  y_pred_exp[,1:1]
   V <- y_pred_exp[,2:2]
-  
-  #browser()
-  
   
   #But note that the Tensor.ndim and Tensor.shape attributes don't return Tensor objects. If you need a Tensor use the tf.rank or tf.shape function. This difference is subtle, but it can be important when building graphs (later).
   
