@@ -1,4 +1,4 @@
-
+# This script uses loss functions that estimate the RUV, and then a log-likelihood loss based on a log-normal distribution.
 
 evidential_loss_2cpt_bolus <- function(y_true, y_pred) {
   
