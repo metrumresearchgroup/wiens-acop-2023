@@ -72,17 +72,24 @@ two_cmpt_bolus_param_to_predictions <- function(dose_levels,
   return(conc_pred)
 }
 
+
+#' Calculate concentrations given 4 PK parameters using ODE
+#' @param dose_levels Rank 1 tensor of the dose for each patient
+#' @param obs_times Rank 2 tensor of the observation times for each patient
+#' @param CL Rank 2 tensor of dimensions (n, 1) tensor of the CL for each patient 
+#' @param V1 Rank 2 tensor of dimensions (n, 1) of the central volume for each patient
+#' @param CL Rank 2 tensor of dimensions (n, 1) tensor of the Q for each patient
+#' @param V2 Rank 2 tensor of dimensions (n, 1) tensor of the peripheral volume for each patient
 two_cmpt_bolus_param_to_predictions_ode <- 
   function(
     dose_levels,
-    dose_times,
+    obs_times,
     CL, 
     V1,
     Q,
     V2,
     .scale = 1000.0
   ) { 
-#    t_init = 0
     ode_fn = function(t, y, A) {
       return(tf$linalg$matvec(A,y)) # multiplies matrix A by vector y (initial conditions)
     }
@@ -103,65 +110,50 @@ two_cmpt_bolus_param_to_predictions_ode <-
     # A(2,1) = k12
     # where rows represent 'compartments' and columns represent 'concentrations'
     
+    # amounts to concentrations and reshaping
     dose_levels <- tf$realdiv(dose_levels, V1)
     dose_levels1 <- tf$concat(list(dose_levels, tf$zeros_like(dose_levels)), axis = 1L)
     
-        
-    CL = tf$squeeze(CL) # using these 'squeezes to change shape from (n,1) to (n) to fit solver
+    # reshape PK parameters
+    CL = tf$squeeze(CL) # using these 'squeeze' functions to change shape from (n,1) to (n) to fit solver
     V1 = tf$squeeze(V1)
     Q = tf$squeeze(Q)
     V2 = tf$squeeze(V2)
     
-    # A11 = 0
-    # A12 = 0
-    # A21 = 0
-    # A22 = 0
-# 
-#     .A = tf$constant(list(list(A11,A12), list(A21,A22)), shape = list(2L, 2L))
-#     
+
     res = tf$map_fn(
       function(.x) {
+        # set initial time
         t_init = tf$constant(0.0)
-        k10 <- tf$realdiv(.x[[1]], .x[[2]])
+        # create rate constants
+        k10 <- tf$realdiv(.x[[1]], .x[[2]]) 
         k12 <- tf$realdiv(.x[[3]], .x[[2]])
         k21 <- tf$realdiv(.x[[3]], .x[[4]])
-        
+        # create rate constant matrix (A matrix)
         A11 = -(k10 +k12)
         A12 = k21
         A22 = -k21
         A21 = k12
-        
-        #.A = tf$constant(list(list(A11,A12), list(A21,A22)), shape = list(2L, 2L))
-        
-        
-        #.A$assign(list(list(A11, A12), list(A21, A22)))
+        # reshaping
          A1 = tf$stack(list(A11, A12), axis = 0L)
          A2 = tf$stack(list(A21, A22), axis = 0L)
          .A = tf$stack(list(A1,A2), axis = 0L)
-        
-        # browser()
-   #     .A = tf$constant(.A, shape(2L, 2L))
-   #     .y_init = tf$Variable(.x[[5]], shape = NULL)
+        # pull out initial conditions
         .y_init = .x[[5]]
+        # pull vector of times to evaluate 
         .solution_t = .x[[6]]
-        # print("before")
-        # print(.y_init)
-         #print(t_init)
-        #print(.solution_t)
+        # reshaping
         .y_init$set_shape(2L)
         .A$set_shape(list(2L, 2L))
-        #print(.A)
+        # ode solver
         res = tfp$math$ode$DormandPrince()$solve(ode_fn, t_init, .y_init,
                                                  solution_times = .solution_t,
                                                  constants=list("A" = .A))$states[,1:1]
-       # res
-     #  print(CL)
-      }, list(CL, V1, Q, V2, dose_levels1, dose_times),
-   
+
+      }, list(CL, V1, Q, V2, dose_levels1, obs_times),
+      
       fn_output_signature = tf$float32
     )
+    # scale output
     res *.scale
-    #res[,1] * .scale
-   # val = res[,1] * .scale
-   # val
   }
