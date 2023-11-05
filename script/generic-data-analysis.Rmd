@@ -7,7 +7,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-This script is an example/test of setting up the data with masking and padding to account for different observation times per patient
+This script is an example/test of setting up the data with masking and padding to account for different observation times per patient and then running a DCM.
 
 # Setup 
 
@@ -115,7 +115,7 @@ model2$layers[[9]]$set_weights(list(
 ))
 
 
-
+# Fit the model, saving the loss at each epoch
 history <- model2 %>% keras::fit(x_train, y_train, verbose = 2,  epochs = 2, batch_size = 128, validation_split = 0.2)
 
 plot(history)
@@ -185,6 +185,8 @@ two_cmpt_bolus_param_to_predictions(
 ```
 
 # Shapley Values
+
+We use Shapley values to interpret the model. We are looking for the non-linearites in the simulated data to be recapitulated in the shapley plots.
 
 ```{R}
 
