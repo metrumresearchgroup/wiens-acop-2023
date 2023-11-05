@@ -1,3 +1,5 @@
+# These functions process the y_true data structure into the pieces for computing concentrations and the loss.
+
 source(here::here("script", "loss-functions.R"))
 source(here::here("script", "loss-functions-two-cmpt.R"))
 
